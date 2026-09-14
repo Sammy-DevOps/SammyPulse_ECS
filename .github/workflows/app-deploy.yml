@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -48,7 +47,7 @@ jobs:
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
 
-          echo "TASK_ARN=$TASK_ARN" >> $GITHUB_ENV
+          echo "TASK_ARN=$TASK_ARN" >> "$GITHUB_ENV"
 
       - name: Deploy to ECS
         run: |
@@ -65,9 +64,4 @@ jobs:
 
       - name: Check application health
         run: |
-          ALB_DNS=$(aws elbv2 describe-load-balancers \
-            --names sammy-alb \
-            --query 'LoadBalancers[0].DNSName' \
-            --output text)
-
-          curl --fail "https://$ALB_DNS/health"
+          curl --fail https://status.sammypulse.co.uk/health
