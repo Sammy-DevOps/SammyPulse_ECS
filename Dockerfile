@@ -12,8 +12,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o gatus .
 # Run Gatus
 FROM alpine:latest
 
-RUN apk upgrade --no-cache && \
-    apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates
+
+RUN addgroup -S gatus && adduser -S gatus -G gatus
 
 WORKDIR /app
 
@@ -24,5 +25,7 @@ ENV GATUS_CONFIG_PATH=/app/config.yaml
 ENV PORT=8080
 
 EXPOSE 8080
+
+USER gatus
 
 ENTRYPOINT ["./gatus"]
