@@ -1,0 +1,37 @@
+{
+  "family": "sammypulse-task",
+  "executionRoleArn": "arn:aws:iam::992163310092:role/sammypulse-ecs-execution-role",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512",
+  "containerDefinitions": [
+    {
+      "name": "sammypulse",
+      "image": "992163310092.dkr.ecr.eu-west-2.amazonaws.com/gatus:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "DISCORD_WEBHOOK_URL",
+          "valueFrom": "arn:aws:ssm:eu-west-2:992163310092:parameter/sammypulse/discord-webhook"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/sammypulse",
+          "awslogs-region": "eu-west-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

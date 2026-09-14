@@ -36,3 +36,38 @@ jobs:
       - name: Push Docker image
         run: |
           docker push ${{ steps.login-ecr.outputs.registry }}/gatus:${{ github.sha }}
+
+      - name: Update task definition image
+        run: |
+          sed -i "s|gatus:latest|gatus:${GITHUB_SHA}|" ecs-task-definition.json
+
+      - name: Register task definition
+        run: |
+          TASK_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://ecs-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "TASK_ARN=$TASK_ARN" >> $GITHUB_ENV
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster sammypulse-cluster \
+            --service sammypulse-service \
+            --task-definition "$TASK_ARN"
+
+      - name: Wait for ECS service
+        run: |
+          aws ecs wait services-stable \
+            --cluster sammypulse-cluster \
+            --services sammypulse-service
+
+      - name: Check application health
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names sammy-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          curl --fail "https://$ALB_DNS/health"
