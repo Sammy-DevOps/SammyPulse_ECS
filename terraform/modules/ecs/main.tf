@@ -36,6 +36,25 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+resource "aws_iam_role_policy" "ssm_parameter_access" {
+  name = "sammypulse-ssm-access"
+  role = aws_iam_role.ecs_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameters"
+        ]
+        Resource = "arn:aws:ssm:eu-west-2:258924246281:parameter/sammypulse/discord-webhook"
+      }
+    ]
+  })
+}
+
 resource "aws_ecs_task_definition" "sammy_task" {
   family                   = "sammypulse-task"
   execution_role_arn       = aws_iam_role.ecs_execution_role.arn
@@ -56,6 +75,23 @@ resource "aws_ecs_task_definition" "sammy_task" {
           protocol      = "tcp"
         }
       ]
+
+      secrets = [
+        {
+          name      = "DISCORD_WEBHOOK_URL"
+          valueFrom = "arn:aws:ssm:eu-west-2:258924246281:parameter/sammypulse/discord-webhook"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+
+        options = {
+          awslogs-group         = "/ecs/sammypulse"
+          awslogs-region        = "eu-west-2"
+          awslogs-stream-prefix = "ecs"
+        }
+      }
     }
   ])
 }
