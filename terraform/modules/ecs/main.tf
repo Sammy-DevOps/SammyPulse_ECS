@@ -2,6 +2,7 @@ variable "subnet_ids" {}
 variable "ecs_sg_id" {}
 variable "target_group_arn" {}
 variable "repository_url" {}
+variable "ssm_parameter_arn" {}
 
 resource "aws_ecs_cluster" "sammy_cluster" {
   name = "sammypulse-cluster"
@@ -49,7 +50,7 @@ resource "aws_iam_role_policy" "ssm_parameter_access" {
         Action = [
           "ssm:GetParameters"
         ]
-        Resource = "arn:aws:ssm:eu-west-2:258924246281:parameter/sammypulse/discord-webhook"
+        Resource = var.ssm_parameter_arn
       }
     ]
   })
@@ -79,7 +80,7 @@ resource "aws_ecs_task_definition" "sammy_task" {
       secrets = [
         {
           name      = "DISCORD_WEBHOOK_URL"
-          valueFrom = "arn:aws:ssm:eu-west-2:258924246281:parameter/sammypulse/discord-webhook"
+          valueFrom = var.ssm_parameter_arn
         }
       ]
 
