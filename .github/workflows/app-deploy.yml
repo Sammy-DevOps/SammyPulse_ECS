@@ -30,7 +30,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t ${{ steps.login-ecr.outputs.registry }}/gatus:${{ github.sha }} .
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/gatus:${{ github.sha }} ./app
 
       - name: Push Docker image
         run: |
@@ -38,12 +38,12 @@ jobs:
 
       - name: Update task definition image
         run: |
-          sed -i "s|gatus:latest|gatus:${GITHUB_SHA}|" ecs-task-definition.json
+          sed -i "s|gatus:latest|gatus:${GITHUB_SHA}|" app/ecs-task-definition.json
 
       - name: Register task definition
         run: |
           TASK_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://ecs-task-definition.json \
+            --cli-input-json file://app/ecs-task-definition.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
 
