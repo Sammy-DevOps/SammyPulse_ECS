@@ -110,9 +110,13 @@ resource "aws_ecs_service" "sammy_service" {
     assign_public_ip = true
   }
 
-  load_balancer {
+    load_balancer {
     target_group_arn = var.target_group_arn
     container_name   = "sammypulse"
     container_port   = 8080
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 }
