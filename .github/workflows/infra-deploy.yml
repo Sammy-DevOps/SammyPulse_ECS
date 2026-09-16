@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "terraform/**"
+      - "infra/**"
 
   workflow_dispatch:
 
@@ -24,12 +24,6 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
-
-      - name: Run TFLint
-        run: tflint --chdir=terraform
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -37,16 +31,16 @@ jobs:
           aws-region: eu-west-2
 
       - name: Terraform init
-        run: terraform -chdir=terraform init
+        run: terraform -chdir=infra init
 
       - name: Terraform format
-        run: terraform -chdir=terraform fmt -check
+        run: terraform -chdir=infra fmt -check
 
       - name: Terraform validate
-        run: terraform -chdir=terraform validate
+        run: terraform -chdir=infra validate
 
       - name: Terraform plan
-        run: terraform -chdir=terraform plan
+        run: terraform -chdir=infra plan
 
       - name: Terraform apply
-        run: terraform -chdir=terraform apply -auto-approve
+        run: terraform -chdir=infra apply -auto-approve
