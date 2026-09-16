@@ -19,6 +19,7 @@ jobs:
 
     env:
       TF_VAR_certificate_arn: ${{ vars.CERTIFICATE_ARN }}
+      TF_VAR_ssm_parameter_arn: ${{ vars.SSM_PARAMETER_ARN }}
 
     steps:
       - name: Checkout repository
