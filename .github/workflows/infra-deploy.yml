@@ -37,9 +37,6 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=infra init      
 
-      - name: Check Terraform state
-        run: terraform -chdir=infra state list
-
       - name: Terraform format
         run: terraform -chdir=infra fmt -check
 
