@@ -17,6 +17,9 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
 
+    env:
+      TF_VAR_certificate_arn: ${{ vars.CERTIFICATE_ARN }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
