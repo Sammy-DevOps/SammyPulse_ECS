@@ -50,14 +50,13 @@ Open `http://localhost:8080` to view SammyPulse locally.
 
 ## Trade-offs
 
-I had a few constraints around cost and keeping the setup simple enough to understand end to end.
+I kept SammyPulse small because I wanted to control the AWS cost and understand everything I was running.
 
-- **Fargate instead of EC2** means less infrastructure to manage but less control over the underlying compute.
-- **One task instead of multiple tasks** keeps the cost down but there is no second healthy target while the task is being replaced.
-- **Public subnets with no NAT** keep the network simpler and cheaper but the task needs a public IP for outbound access.
-- **Manual rollback** works for the current setup but recovery takes longer than an automatic rollback.
+I used Fargate so I didn't have to manage EC2 servers. I only run one task which is cheaper, but if that task is being replaced there isn't another one ready to take traffic.
 
-These choices kept the current setup smaller while still giving me room to improve the design later.
+I also kept the task in public subnets and skipped the NAT gateway. This made the network cheaper and easier to work with, although the task needs a public IP for outbound access. The security group still only allows application traffic from the ALB.
+
+Rollback is manual for now. If a deployment fails I can return to the last working image, but automatic rollback is something I'd add later.
 
 ## Building SammyPulse
 
@@ -65,23 +64,21 @@ These choices kept the current setup smaller while still giving me room to impro
 
 I started locally so I could check the application and container before adding AWS. Once that was working I pushed the image to ECR and deployed it to Fargate.
 
-I chose Fargate because I didn't need to manage EC2 hosts for a small containerised application. SammyPulse runs one task across two public subnets with no NAT gateway. The task needs a public IP for outbound access but inbound application traffic is still restricted to the ALB.
+ECR stores the container images used by ECS. I tag each image with the Git commit SHA so I can match a deployed image back to the code that built it.
 
 ### Moving to Terraform
 
 I created the infrastructure manually first because I wanted to understand how the AWS resources connected. Once the request path was working I moved the network, ALB, ECR and ECS resources into Terraform modules. This made the infrastructure repeatable and kept it in code.
 
-The AWS resources already existed when I made this change. Moving them into modules changed their Terraform addresses. I didn't want Terraform to recreate working resources because I had changed the code structure, so I used `moved` blocks to map the old addresses to the new ones.
+The AWS resources already existed when I made this change. Moving them into modules changed their Terraform addresses. I didn't want Terraform to recreate working resources because I had changed the code structure, so I used Terraform moved blocks to map the old addresses to the new ones.
 
 Terraform state is stored in S3 so local Terraform and GitHub Actions use the same state. At one point CI planned around 20 resources that already existed while my local plan showed no changes. I stopped before applying it and traced the difference back to the backend setup. After fixing it I checked the plan again before continuing.
 
 ### Automating Deployments
 
-Once the infrastructure was stable I automated deployments with GitHub Actions. Application changes build a Docker image and tag it with the Git SHA. The pipeline pushes the image to ECR and updates the ECS service.
+Once the infrastructure was stable I automated deployments with GitHub Actions. Application changes build the Docker image and push it to ECR. The pipeline then updates the ECS service and waits for it to become stable.
 
-I use the Git SHA so I can trace a deployed image back to the commit that produced it. GitHub authenticates to AWS through OIDC instead of storing long-lived AWS access keys.
-
-Infrastructure changes have their own Terraform workflow. Destroy is kept as a separate manual workflow so the environment cannot be removed by a normal push.
+GitHub authenticates to AWS through OIDC instead of storing long-lived AWS access keys. Infrastructure changes have their own Terraform workflow. Destroy is kept as a separate manual workflow so it has to be triggered intentionally.
 
 ![Successful application deployment](assets/screenshots/app-pipeline-green.png)
 
@@ -107,13 +104,13 @@ I tested a bad deployment as well. When the new version couldn't become healthy 
 
 ## What I'd Improve
 
-The current design keeps cost and complexity down but it could be more resilient.
+The current setup keeps the AWS cost down, but I would make a few changes if I needed more availability.
 
-I would move the ECS tasks into private subnets so they no longer need public IPs. VPC endpoints could provide access to AWS services. NAT could then be added if the application still needed outbound internet access.
+I would move the ECS tasks into private subnets so they no longer need public IPs. VPC endpoints could provide access to AWS services. I would add NAT if the application still needed outbound internet access.
 
-I would also run multiple tasks across availability zones. This would cost more but the ALB would have another healthy target if one task failed or was being replaced.
+I would also run multiple tasks across availability zones. This would cost more but it would give the ALB another healthy target if one task failed or was being replaced.
 
-The deployment currently uses manual rollback. I would add automatic rollback so ECS can recover faster from a failed deployment. I would also add CloudWatch alarms for ALB errors and response time as well as ECS CPU and memory.
+I would also add automatic rollback for failed deployments and CloudWatch alarms for ALB errors, response time, ECS CPU and memory.
 
 ## Application Credit
 
