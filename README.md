@@ -33,19 +33,25 @@ curl http://localhost:8080/health
 
 ## Building SammyPulse
 
+### From Docker to AWS
+
 I started with the application running locally in Docker, then pushed the image to ECR and deployed it to Fargate. I chose Fargate because I wanted to focus on the container and AWS services rather than managing EC2 hosts. The trade-off is less control over the underlying compute, which was fine for this deployment.
 
-I also had a cost constraint. SammyPulse currently runs one task across two public subnets with no NAT gateway. That keeps the AWS footprint smaller, but there are trade-offs. The task needs a public IP for outbound access and with only one task there is no second healthy target while ECS replaces it. Inbound traffic is still locked to the ALB through the security groups.
+I also had a cost constraint. SammyPulse runs one task across two public subnets with no NAT gateway. This keeps the AWS footprint smaller, but the task needs a public IP for outbound access and there is no second healthy target while ECS replaces it. Inbound traffic is still restricted to the ALB through the security groups.
+
+### Moving to Terraform
 
 The infrastructure started manually because I wanted to understand how each part connected before automating it. Once the request path was working, I moved the network, ALB, ECR and ECS resources into Terraform modules.
 
-That created another constraint because the infrastructure already existed. Moving resources into modules changed their Terraform addresses, and I didn't want a code restructure to destroy working infrastructure. I used `moved` blocks to map the old addresses to the new ones instead.
+The infrastructure already existed, so moving it into modules changed the Terraform addresses. I didn't want a code restructure to recreate working resources, so I used `moved` blocks to map the old addresses to the new ones.
 
-Terraform state is stored in S3 so local Terraform and GitHub Actions share the same view of the infrastructure. This mattered when CI once planned around 20 resources that already existed while my local plan showed no changes. I wasn't touching apply with a plan like that. I traced it back to the backend setup, fixed the state issue and checked the plan again before continuing.
+Terraform state is stored in S3 so local Terraform and GitHub Actions share the same state. At one point CI planned around 20 resources that already existed while my local plan showed no changes. I wasn't touching apply with a plan like that. I traced it back to the backend setup, fixed it and checked the plan again.
 
-Once the infrastructure was stable, I automated the deployments with GitHub Actions. Application changes build a new image, tag it with the Git SHA, push it to ECR and update ECS. Using the commit SHA means I can trace a deployed image back to the code that produced it.
+### Automating Deployments
 
-GitHub authenticates to AWS through OIDC instead of storing long-lived AWS keys. Infrastructure changes have their own Terraform workflow, while destroy is kept as a separate manual workflow so removing the environment has to be intentional.
+Once the infrastructure was stable, I automated deployments with GitHub Actions. Application changes build an image, tag it with the Git SHA, push it to ECR and update ECS. The SHA means I can trace a deployed image back to the commit that produced it.
+
+GitHub authenticates to AWS through OIDC instead of storing long-lived AWS keys. Infrastructure changes have their own Terraform workflow, while destroy is a separate manual workflow so removing the environment has to be intentional.
 
 ![Successful application deployment](assets/screenshots/app-pipeline-green.png)
 
@@ -53,7 +59,7 @@ GitHub authenticates to AWS through OIDC instead of storing long-lived AWS keys.
 
 I didn't want the project to stop at a successful deployment, so I tested what happened when things actually broke.
 
-I deliberately failed one of the monitored endpoints. SammyPulse detected it and sent a Discord alert, then sent a recovery notification when the endpoint came back. The webhook itself is stored in SSM Parameter Store rather than the repository, and application logs go to CloudWatch.
+I deliberately failed one of the monitored endpoints. SammyPulse detected it and sent a Discord alert, then sent a recovery notification when the endpoint came back. The webhook is stored in SSM Parameter Store rather than the repository, and application logs go to CloudWatch.
 
 ![Discord alert after endpoint failure](assets/screenshots/discord-alert.png)
 
