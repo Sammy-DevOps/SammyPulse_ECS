@@ -52,10 +52,10 @@ Open http://localhost:8080 to view SammyPulse locally.
 
 I kept SammyPulse small because I wanted to control the AWS cost and understand everything I was running.
 
-- **Fargate instead of EC2** keeps server management out of the project, but gives me less control over the underlying compute.
-- **One ECS task** keeps the cost down, but there is no second task ready to take traffic during replacement.
-- **Public subnets with no NAT gateway** keep the network simpler and cheaper, but the task needs a public IP for outbound access.
-- **Manual rollback** works for the current setup, but recovery is slower than automatic rollback.
+- **Fargate instead of EC2** means I don't have servers to manage, but I get less control over the underlying compute.
+- **One ECS task** costs less, but there isn't another task available if the running one goes down or gets replaced.
+- **No NAT gateway** keeps the AWS cost down, but the task needs a public IP for outbound internet access.
+- **Building manually before Terraform** took longer at the start, but it helped me understand how the AWS resources connected before automating them.
 
 ## Building SammyPulse
 
