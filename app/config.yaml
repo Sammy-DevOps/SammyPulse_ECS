@@ -19,7 +19,7 @@ endpoints:
 
   - name: monitoring
     group: internal
-    url: "https://thiswillfail.invalid/"
+    url: "https://status.sammypulse.co.uk/health"
     interval: 5m
     conditions:
       - "[STATUS] == 200"
