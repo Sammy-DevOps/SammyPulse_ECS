@@ -1,111 +1,86 @@
 # SammyPulse ECS
 
-SammyPulse is my deployment of Gatus, an open-source monitoring application that checks if services are available and healthy.
+SammyPulse is my deployment of Gatus, an open-source application that monitors endpoints and reports when something becomes unavailable. It runs as a Docker container on AWS ECS Fargate, with the infrastructure managed through Terraform and deployments handled by GitHub Actions.
 
-I deployed it on AWS ECS Fargate using Docker, Terraform, HTTPS, monitoring and CI/CD through GitHub Actions.
+The goal was to keep the platform small and understandable while still covering the things I would expect around a real service: HTTPS, controlled network access, repeatable infrastructure, automated deployments, monitoring and recovery when something goes wrong.
+
+## Live Demo
+
+🌐 **[View SammyPulse](https://status.sammypulse.co.uk)**
+
+![SammyPulse live demo](assets/screenshots/sammypulse-demo.gif)
 
 ## Architecture
 
 ![SammyPulse Architecture](assets/screenshots/sammypulsediagram.png)
 
-**Traffic:** User → Route 53 → HTTPS/ALB → ECS Fargate → SammyPulse
+**Request path:** User → Route 53 → HTTPS/ALB → ECS Fargate → SammyPulse
 
-The ALB is the public entry point. ECS tasks sit behind it and only accept application traffic from the ALB.
+The ALB is where public traffic stops. It forwards requests to the ECS task on port `8080`, but that port isn't open directly to the internet. The ECS security group only accepts `8080` from the ALB security group.
 
-## Repository Structure
-
-```text
-SammyPulse_ECS/
-├── .github/workflows/    # Application and Terraform pipelines
-├── app/                  # Gatus application and Dockerfile
-├── assets/screenshots/   # Project evidence
-├── infra/                # Terraform infrastructure
-├── LICENSE
-└── README.md
-```
+Route 53 handles the domain and ACM provides HTTPS. The ALB also checks `/health` before treating the task as healthy and sending traffic to it.
 
 ## Local Setup
-
-Clone the repository:
 
 ```bash
 git clone https://github.com/Sammy-DevOps/SammyPulse_ECS.git
 cd SammyPulse_ECS
-```
 
-Build and run SammyPulse:
-
-```bash
 docker build -t sammypulse:local ./app
 docker run --rm -d --name sammypulse -p 8080:8080 sammypulse:local
-```
 
-Check the application:
-
-```bash
 curl http://localhost:8080/health
 # {"status":"UP"}
 ```
 
-## Engineering Decisions
+## Engineering the Deployment
 
-| Decision | Why |
-|---|---|
-| **ECS Fargate** | Run containers without managing EC2 servers. |
-| **ALB → ECS** | One public entry point while tasks stay behind the ALB. |
-| **Security Groups** | Port `8080` only accepts traffic from the ALB. |
-| **Terraform modules** | Separate network, ALB, ECR and ECS infrastructure. |
-| **S3 state** | Laptop and CI use the same Terraform record. |
-| **Git SHA tags** | Trace a deployed image back to its code. |
-| **GitHub OIDC** | Temporary AWS access without storing permanent keys. |
-| **SSM Parameter Store** | Keep the Discord webhook outside the code and image. |
+I kept the infrastructure fairly small. SammyPulse currently runs one Fargate task across a network with two public subnets and no NAT gateway.
 
-## Docker & AWS
+That keeps the setup and cost down, but it comes with limits. The task needs a public IP for outbound access and one task means there can be a short period without a healthy target while ECS replaces it. The public IP also made the security group boundary important. Inbound application traffic still has to come through the ALB rather than reaching the task directly.
 
-Gatus is containerised using a multi-stage Dockerfile and images are stored in a private ECR repository.
+Fargate fits the same approach. There are no EC2 hosts for me to manage or patch and ECS maintains the desired task count. The trade-off is less control over the compute underneath compared with running ECS on EC2.
 
-SammyPulse runs in `eu-west-2` across two public subnets. Route 53 handles DNS, ACM provides HTTPS and CloudWatch receives application logs.
+Images are stored in ECR and tagged with the Git SHA. This means a running image can be traced back to the exact commit that produced it instead of relying on a changing tag such as `latest`.
 
-## Terraform
+The infrastructure started manually. Once I understood the traffic path and how the AWS resources connected, I moved it into Terraform modules for the network, ALB, ECR and ECS.
 
-I deployed the infrastructure manually first, then moved it into Terraform modules.
+That migration had its own constraint: the resources already existed. Moving them into modules changed their Terraform addresses, and I didn't want Terraform destroying and recreating working infrastructure just because the code structure had changed. I used `moved` blocks to map the old addresses to the new ones.
 
-Terraform state is stored in S3 so my laptop and GitHub Actions share the same record of what Terraform manages. Before applying changes, I check the Terraform plan to see what will be added, changed or removed.
+Terraform state is stored in S3 so local Terraform and GitHub Actions use the same view of the infrastructure. At one point CI planned around 20 resources that already existed while my local plan showed no changes. I wasn't touching apply with a plan like that. I traced the difference back to the backend setup, fixed it and checked the plan again before continuing.
 
-## CI/CD
+GitHub Actions now handles the application and infrastructure deployments. The application pipeline builds the image, tags and pushes it to ECR then updates ECS. It waits for the service to stabilise before checking `/health`.
 
-GitHub Actions handles application and infrastructure changes.
+AWS access from GitHub uses OIDC rather than long-lived AWS access keys. Terraform destroy also has its own manual workflow, so removing the environment has to be intentional rather than something a normal push can trigger.
 
-The application pipeline builds the image, tags it with the Git commit SHA, pushes it to ECR, updates ECS, waits for the service to stabilise and checks `/health`.
+![Successful application deployment](assets/screenshots/app-pipeline-green.png)
 
-A separate workflow checks and applies Terraform changes. Both use OIDC to access AWS without long-lived AWS keys.
+## Monitoring and Reliability
 
-## Reliability Testing
+Application logs go to CloudWatch and the Discord webhook is stored in SSM Parameter Store rather than the repository or Docker image.
 
-I stopped the running ECS task to test recovery. ECS replaced it and returned the service to its desired state.
+I wanted to test the alerting rather than just assume the configuration worked. I deliberately broke one of the monitored endpoints and SammyPulse picked up the failure. A Discord alert came through and when I restored the endpoint I received the recovery notification.
 
-I also forced a monitored endpoint to fail. SammyPulse detected it, sent a Discord alert and CloudWatch provided the container logs for investigation.
+![Discord alert after endpoint failure](assets/screenshots/discord-alert.png)
 
-## Troubleshooting
+I tested ECS recovery in a similar way by stopping the running task. ECS detected that the desired count was no longer met, launched a replacement and brought the service back.
 
-### ALB target unhealthy
+![ECS replacing the stopped task](assets/screenshots/ecs-self-healing.png)
 
-The ECS task was running but the ALB target stayed unhealthy.
+One of the main issues during the build was a task that looked healthy in ECS while the ALB kept marking the target unhealthy. I followed the request path from the ALB to the target group and then the ECS security group. The ALB was being blocked on `8080`. Allowing that port specifically from the ALB security group fixed the health checks without opening it to everyone.
 
-I traced traffic from the ALB to the task and found the ECS security group was blocking port `8080`. I allowed `8080` only from the ALB security group and checked again. The target became healthy.
+![Healthy ALB target after the security group fix](assets/screenshots/alb-target-healthy.png)
 
-### Terraform wanted to create 20 existing resources
+I also tested a bad application deployment. When the new version couldn't become healthy, I checked the ECS deployment and CloudWatch logs then rolled back to the last known good image. I checked the service and `/health` again afterwards rather than treating the rollback itself as proof of recovery.
 
-Terraform on my laptop showed no changes, but GitHub Actions wanted to create 20 resources that already existed.
+## Improvements
 
-I compared both environments and found GitHub Actions was not using the Terraform state in S3, so it did not know Terraform already managed those resources.
+The first network improvement would be moving the ECS tasks into private subnets so they no longer need public IPs. VPC endpoints could cover access to AWS services, with NAT added where outbound internet access is still required.
 
-After fixing the state setup, the next error showed the pipeline could not read some load balancer and IAM role details. I followed the errors and added only the permissions it needed. The next run passed.
+I'd also move from one task to multiple tasks across availability zones. One task keeps the current cost down, but the ALB has no second healthy target while that task is being replaced. Multiple tasks would improve availability during failures and deployments.
 
-I did not apply the original plan because the 20 unexpected resources showed the pipeline was not seeing what I expected.
+Deployment recovery is still manual, so automatic rollback would be another improvement. I'd also add CloudWatch alarms around ALB errors and response time alongside ECS CPU and memory. The current logs and endpoint alerts give me useful signals, but those extra metrics would make problems easier to catch earlier.
 
 ## Application Credit
 
-Gatus was created by [TwiN](https://github.com/TwiN/gatus).
-
-My work covers the container deployment, AWS infrastructure, Terraform, security, CI/CD, monitoring, reliability testing and troubleshooting.
+[Gatus](https://github.com/TwiN/gatus) was created by TwiN. My work here covers the Docker deployment, AWS infrastructure, Terraform, CI/CD, security, monitoring, failure testing and troubleshooting around the application.
