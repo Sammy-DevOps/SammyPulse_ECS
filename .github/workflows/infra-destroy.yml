@@ -1,0 +1,38 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform-destroy:
+    runs-on: ubuntu-latest
+
+    env:
+      TF_VAR_certificate_arn: ${{ vars.CERTIFICATE_ARN }}
+      TF_VAR_ssm_parameter_arn: ${{ vars.SSM_PARAMETER_ARN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: eu-west-2
+
+      - name: Terraform init
+        run: terraform -chdir=infra init
+
+      - name: Terraform destroy plan
+        run: terraform -chdir=infra plan -destroy
+
+      - name: Terraform destroy
+        run: terraform -chdir=infra destroy -auto-approve
