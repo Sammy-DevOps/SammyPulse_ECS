@@ -1,8 +1,8 @@
 # SammyPulse ECS
 
-SammyPulse is my deployment of Gatus, an open-source app that monitors endpoints and reports when something goes down. I containerised it with Docker, deployed it on AWS ECS Fargate and used Terraform and GitHub Actions to manage the infrastructure and deployments.
+SammyPulse is my deployment of Gatus, an open-source app that monitors endpoints and reports when something goes down. I containerised it with Docker and deployed it on AWS ECS Fargate. Terraform manages the infrastructure and GitHub Actions handles deployments.
 
-The aim was to keep the platform small enough to understand end to end, while still making decisions around security, reliability, cost and recovery.
+The aim was to keep the platform simple enough to understand end to end while still thinking about security, reliability, cost and recovery.
 
 ## Live Demo
 
@@ -14,72 +14,106 @@ The aim was to keep the platform small enough to understand end to end, while st
 
 ![SammyPulse Architecture](assets/screenshots/sammypulse-architecture.png)
 
-**User → Route 53 → HTTPS/ALB → ECS Fargate → SammyPulse**
+**User → Route 53 → HTTPS → ALB → ECS Fargate → SammyPulse**
 
-I decided the ALB should be where the public internet stops. Route 53 sends users to the ALB over HTTPS, then the ALB forwards traffic to SammyPulse on `8080`. The ECS security group only allows that port from the ALB security group, so the task isn't directly open to inbound internet traffic.
+I decided the ALB should be where the public internet stops. Route 53 sends users to the ALB over HTTPS. The ALB then forwards traffic to SammyPulse on `8080`.
+
+The ECS security group only allows `8080` from the ALB security group. This keeps the application port closed to direct inbound internet traffic. The ALB also checks `/health` before sending traffic to the task so the application has to be healthy before it receives requests.
 
 ## Run Locally
+
+Clone the repo and build the image.
 
 ```bash
 git clone https://github.com/Sammy-DevOps/SammyPulse_ECS.git
 cd SammyPulse_ECS
-
 docker build -t sammypulse:local ./app
-docker run --rm -d --name sammypulse -p 8080:8080 sammypulse:local
+```
 
+Run the container.
+
+```bash
+docker run --rm -d \
+  --name sammypulse \
+  -p 8080:8080 \
+  sammypulse:local
+```
+
+Check the health endpoint.
+
+```bash
 curl http://localhost:8080/health
 # {"status":"UP"}
 ```
+
+Open `http://localhost:8080` to view SammyPulse locally.
+
+## Trade-offs
+
+I had a few constraints around cost and keeping the setup simple enough to understand end to end.
+
+- **Fargate instead of EC2** means less infrastructure to manage but less control over the underlying compute.
+- **One task instead of multiple tasks** keeps the cost down but there is no second healthy target while the task is being replaced.
+- **Public subnets with no NAT** keep the network simpler and cheaper but the task needs a public IP for outbound access.
+- **Manual rollback** works for the current setup but recovery takes longer than an automatic rollback.
+
+These choices kept the current setup smaller while still giving me room to improve the design later.
 
 ## Building SammyPulse
 
 ### From Docker to AWS
 
-I started with the application running locally in Docker, then pushed the image to ECR and deployed it to Fargate. I chose Fargate because I wanted to focus on the container and AWS services rather than managing EC2 hosts. The trade-off is less control over the underlying compute, which was fine for this deployment.
+I started locally so I could check the application and container before adding AWS. Once that was working I pushed the image to ECR and deployed it to Fargate.
 
-I also had a cost constraint. SammyPulse runs one task across two public subnets with no NAT gateway. This keeps the AWS footprint smaller, but the task needs a public IP for outbound access and there is no second healthy target while ECS replaces it. Inbound traffic is still restricted to the ALB through the security groups.
+I chose Fargate because I didn't need to manage EC2 hosts for a small containerised application. SammyPulse runs one task across two public subnets with no NAT gateway. The task needs a public IP for outbound access but inbound application traffic is still restricted to the ALB.
 
 ### Moving to Terraform
 
-The infrastructure started manually because I wanted to understand how each part connected before automating it. Once the request path was working, I moved the network, ALB, ECR and ECS resources into Terraform modules.
+I created the infrastructure manually first because I wanted to understand how the AWS resources connected. Once the request path was working I moved the network, ALB, ECR and ECS resources into Terraform modules. This made the infrastructure repeatable and kept it in code.
 
-The infrastructure already existed, so moving it into modules changed the Terraform addresses. I didn't want a code restructure to recreate working resources, so I used `moved` blocks to map the old addresses to the new ones.
+The AWS resources already existed when I made this change. Moving them into modules changed their Terraform addresses. I didn't want Terraform to recreate working resources because I had changed the code structure, so I used `moved` blocks to map the old addresses to the new ones.
 
-Terraform state is stored in S3 so local Terraform and GitHub Actions share the same state. At one point CI planned around 20 resources that already existed while my local plan showed no changes. I wasn't touching apply with a plan like that. I traced it back to the backend setup, fixed it and checked the plan again.
+Terraform state is stored in S3 so local Terraform and GitHub Actions use the same state. At one point CI planned around 20 resources that already existed while my local plan showed no changes. I stopped before applying it and traced the difference back to the backend setup. After fixing it I checked the plan again before continuing.
 
 ### Automating Deployments
 
-Once the infrastructure was stable, I automated deployments with GitHub Actions. Application changes build an image, tag it with the Git SHA, push it to ECR and update ECS. The SHA means I can trace a deployed image back to the commit that produced it.
+Once the infrastructure was stable I automated deployments with GitHub Actions. Application changes build a Docker image and tag it with the Git SHA. The pipeline pushes the image to ECR and updates the ECS service.
 
-GitHub authenticates to AWS through OIDC instead of storing long-lived AWS keys. Infrastructure changes have their own Terraform workflow, while destroy is a separate manual workflow so removing the environment has to be intentional.
+I use the Git SHA so I can trace a deployed image back to the commit that produced it. GitHub authenticates to AWS through OIDC instead of storing long-lived AWS access keys.
+
+Infrastructure changes have their own Terraform workflow. Destroy is kept as a separate manual workflow so the environment cannot be removed by a normal push.
 
 ![Successful application deployment](assets/screenshots/app-pipeline-green.png)
 
 ## Testing Failure
 
-I didn't want the project to stop at a successful deployment, so I tested what happened when things actually broke.
+I also tested how the deployment behaved when something went wrong.
 
-I deliberately failed one of the monitored endpoints. SammyPulse detected it and sent a Discord alert, then sent a recovery notification when the endpoint came back. The webhook is stored in SSM Parameter Store rather than the repository, and application logs go to CloudWatch.
+I broke one of the monitored endpoints to test the alerting. SammyPulse detected the failure and sent a Discord alert. When I restored the endpoint it sent a recovery notification. The Discord webhook is stored in SSM Parameter Store rather than the repository. Application logs are sent to CloudWatch.
 
 ![Discord alert after endpoint failure](assets/screenshots/discord-alert.png)
 
-I also stopped the running ECS task. Because the service desired count was one, ECS detected the missing task and launched a replacement.
+I stopped the running ECS task to test ECS recovery. The service desired count was one so ECS detected the missing task and launched a replacement.
 
 ![ECS replacing the stopped task](assets/screenshots/ecs-self-healing.png)
 
-One of the main problems I hit during the build was an ECS task that was running while the ALB still showed the target as unhealthy. I followed the request path from the ALB to the target group and then the ECS security group. The ALB couldn't reach the task on `8080`. I fixed the rule by allowing `8080` from the ALB security group only, and the target became healthy.
+During the build I had an issue where the ECS task was running but the ALB target was unhealthy. I checked the request path from the ALB to the target group and then the ECS security group. The security group was blocking the ALB from reaching the task on `8080`.
+
+I changed the rule to allow `8080` from the ALB security group only. This fixed the health check without opening the application port to the internet.
 
 ![Healthy ALB target after the security group fix](assets/screenshots/alb-target-healthy.png)
 
-I tested a bad deployment as well. When the new version couldn't become healthy, I checked the ECS deployment and CloudWatch logs, rolled back to the last known good image and checked `/health` again to confirm recovery.
+I tested a bad deployment as well. When the new version couldn't become healthy I checked the ECS deployment and CloudWatch logs. I rolled back to the last known good image and checked `/health` again to confirm the service had recovered.
 
 ## What I'd Improve
 
-The current design favours cost and simplicity over maximum availability. The next step would be private subnets for the ECS tasks so they no longer need public IPs, using VPC endpoints for AWS services and NAT only where outbound internet access is required.
+The current design keeps cost and complexity down but it could be more resilient.
 
-I'd also move from one task to multiple tasks across availability zones. That would cost more, but the ALB would have another healthy target during a task failure or deployment.
+I would move the ECS tasks into private subnets so they no longer need public IPs. VPC endpoints could provide access to AWS services. NAT could then be added if the application still needed outbound internet access.
 
-Finally, I'd add automatic rollback for failed deployments and CloudWatch alarms around ALB errors, response time and ECS CPU and memory. That would move some of the recovery and detection I'm currently doing manually into the platform itself.
+I would also run multiple tasks across availability zones. This would cost more but the ALB would have another healthy target if one task failed or was being replaced.
+
+The deployment currently uses manual rollback. I would add automatic rollback so ECS can recover faster from a failed deployment. I would also add CloudWatch alarms for ALB errors and response time as well as ECS CPU and memory.
 
 ## Application Credit
 
