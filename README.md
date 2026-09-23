@@ -1,6 +1,6 @@
 # SammyPulse ECS
 
-SammyPulse is my deployment of Gatus, an open-source app that monitors endpoints and reports when something goes down. I containerised it with Docker and deployed it on AWS ECS Fargate. Terraform manages the infrastructure and GitHub Actions handles deployments.
+SammyPulse is my deployment of Gatus, a open source app that monitors endpoints and reports when something goes down. I containerised it with Docker and deployed it on AWS ECS Fargate. Terraform manages the infrastructure and GitHub Actions handles deployments.
 
 The aim was to keep the platform simple enough to understand end to end while still thinking about security, reliability, cost and recovery.
 
